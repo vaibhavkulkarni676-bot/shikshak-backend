@@ -40,11 +40,17 @@ async function callGemini(system, prompt, maxTokens){
   if(!GEMINI_API_KEY){
     throw new Error('GEMINI_API_KEY is not set on the server.');
   }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  // Google's newer "AQ." auth keys must be sent as the x-goog-api-key header,
+  // not as a ?key= URL query parameter (which only works with the older
+  // AIzaSy... key format). Sending it as a header works for both formats.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY
+    },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
