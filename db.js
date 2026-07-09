@@ -1,38 +1,24 @@
-const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
 
-// SQLite file lives right next to this file. On most hosts (Render, Railway)
-// you should mount a persistent disk at this path so data survives restarts —
-// see README.md for exact instructions.
-const db = new Database(path.join(__dirname, 'shikshak.db'));
+const DATA_FILE = path.join(__dirname, 'shikshak-data.json');
 
-db.pragma('journal_mode = WAL');
+function loadData(){
+  if(fs.existsSync(DATA_FILE)){
+    try{
+      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    }catch(err){
+      console.error('Could not parse shikshak-data.json, starting fresh:', err.message);
+    }
+  }
+  return { users: [], generations: [], nextUserId: 1, nextGenId: 1 };
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    school TEXT,
-    plan TEXT NOT NULL DEFAULT 'free',
-    default_grade TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
+let data = loadData();
 
-  CREATE TABLE IF NOT EXISTS generations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    tool TEXT NOT NULL,
-    title TEXT,
-    provider TEXT NOT NULL DEFAULT 'anthropic',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
-  CREATE INDEX IF NOT EXISTS idx_generations_created ON generations(created_at);
-`);
+function save(){
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
 
 // ---- Plan limits ----
 const PLAN_LIMITS = {
@@ -41,23 +27,92 @@ const PLAN_LIMITS = {
   school: Infinity
 };
 
-// ---- Query helpers ----
+// ---- Query-like helpers (same shape as before: .get/.run/.all) so the ----
+// ---- rest of the app (server.js) didn't need to change at all.        ----
 const statements = {
-  insertUser: db.prepare(`INSERT INTO users (name, email, password_hash, school) VALUES (?, ?, ?, ?)`),
-  findUserByEmail: db.prepare(`SELECT * FROM users WHERE email = ?`),
-  findUserById: db.prepare(`SELECT * FROM users WHERE id = ?`),
-  updateUserProfile: db.prepare(`UPDATE users SET name = ?, school = ?, default_grade = ? WHERE id = ?`),
-  updateUserPlan: db.prepare(`UPDATE users SET plan = ? WHERE id = ?`),
+  insertUser: {
+    run(name, email, password_hash, school){
+      const user = {
+        id: data.nextUserId++,
+        name, email, password_hash,
+        school: school || null,
+        plan: 'free',
+        default_grade: null,
+        created_at: new Date().toISOString()
+      };
+      data.users.push(user);
+      save();
+      return { lastInsertRowid: user.id };
+    }
+  },
 
-  insertGeneration: db.prepare(`INSERT INTO generations (user_id, tool, title, provider) VALUES (?, ?, ?, ?)`),
-  countGenerationsThisMonth: db.prepare(`
-    SELECT COUNT(*) as count FROM generations
-    WHERE user_id = ? AND created_at >= datetime('now', 'start of month')
-  `),
-  getHistory: db.prepare(`
-    SELECT tool, title, provider, created_at FROM generations
-    WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
-  `)
+  findUserByEmail: {
+    get(email){
+      return data.users.find(u => u.email === email);
+    }
+  },
+
+  findUserById: {
+    get(id){
+      return data.users.find(u => u.id === id);
+    }
+  },
+
+  updateUserProfile: {
+    run(name, school, default_grade, id){
+      const u = data.users.find(u => u.id === id);
+      if(u){
+        u.name = name;
+        u.school = school;
+        u.default_grade = default_grade;
+        save();
+      }
+    }
+  },
+
+  updateUserPlan: {
+    run(plan, id){
+      const u = data.users.find(u => u.id === id);
+      if(u){
+        u.plan = plan;
+        save();
+      }
+    }
+  },
+
+  insertGeneration: {
+    run(user_id, tool, title, provider){
+      const gen = {
+        id: data.nextGenId++,
+        user_id, tool, title, provider,
+        created_at: new Date().toISOString()
+      };
+      data.generations.push(gen);
+      save();
+      return { lastInsertRowid: gen.id };
+    }
+  },
+
+  countGenerationsThisMonth: {
+    get(user_id){
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const count = data.generations.filter(g =>
+        g.user_id === user_id && new Date(g.created_at) >= startOfMonth
+      ).length;
+      return { count };
+    }
+  },
+
+  getHistory: {
+    all(user_id){
+      return data.generations
+        .filter(g => g.user_id === user_id)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 50)
+        .map(g => ({ tool: g.tool, title: g.title, provider: g.provider, created_at: g.created_at }));
+    }
+  }
 };
 
 function getUsageThisMonth(userId){
@@ -68,4 +123,4 @@ function getPlanLimit(plan){
   return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 }
 
-module.exports = { db, statements, getUsageThisMonth, getPlanLimit, PLAN_LIMITS };
+module.exports = { statements, getUsageThisMonth, getPlanLimit, PLAN_LIMITS };
