@@ -1,6 +1,6 @@
 {
   "name": "shikshak-ai-backend",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Complete backend for Shikshak.ai - database, auth, usage limits, and multi-provider AI (Claude + Gemini)",
   "main": "server.js",
   "type": "commonjs",
@@ -13,7 +13,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express-rate-limit": "^7.4.0",
-    "better-sqlite3": "^11.3.0",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2"
   },
